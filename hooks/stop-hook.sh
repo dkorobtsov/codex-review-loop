@@ -111,7 +111,7 @@ Your review MUST include ALL of these sections:
 - Accessibility considerations
 - Responsive design (test at desktop and mobile viewports)
 - If the project has a web UI, use agent-browser for E2E tests and screenshots:
-  Install: claude install-skill https://agent-browser.dev
+  Install: npm install -g agent-browser (or: brew install agent-browser)
   Navigate the running app, test key workflows, and take screenshots to verify UX.
 
 For each issue found, provide:
