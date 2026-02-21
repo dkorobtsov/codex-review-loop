@@ -30,11 +30,17 @@ The Codex review covers:
 ## Installation
 
 ```bash
-# Local development / testing
-claude --plugin-dir /path/to/claude-review-loop
+# Step 1: Add the marketplace
+/plugin marketplace add hamelsmu/claude-review-loop
 
-# Or install from GitHub
-claude plugin install claude-review-loop@github:hamelsmu/claude-review-loop
+# Step 2: Install the plugin
+/plugin install review-loop@hamel-review
+```
+
+Or for local development / testing without installing:
+
+```bash
+claude --plugin-dir /path/to/claude-review-loop/plugins/review-loop
 ```
 
 ## Usage
