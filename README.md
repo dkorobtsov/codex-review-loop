@@ -13,19 +13,44 @@ The result: every task gets an independent second opinion before you accept the 
 
 ## Review coverage
 
-The Codex review covers:
+The plugin spawns up to 4 parallel Codex sub-agents, depending on project type:
 
-- **Code quality** — organization, modularity, DRY, naming
-- **Test coverage** — new tests, edge cases, test quality
-- **Security** — input validation, injection, secrets, OWASP top 10
-- **Documentation & agent harness** — AGENTS.md, CLAUDE.md symlinks, telemetry, type system, agent guardrails
-- **UX & design** (for UI projects) — E2E tests, visual quality, accessibility
+| Agent | Always runs? | Focus |
+|-------|-------------|-------|
+| **Diff Review** | Yes | `git diff` — code quality, test coverage, security (OWASP top 10) |
+| **Holistic Review** | Yes | Project structure, documentation, AGENTS.md, agent harness, architecture |
+| **Next.js Review** | If `next.config.*` or `"next"` in `package.json` | App Router, Server Components, caching, Server Actions, React performance |
+| **UX Review** | If `app/`, `pages/`, `public/`, or `index.html` exists | Browser E2E via [agent-browser](https://agent-browser.dev/), accessibility, responsive design |
+
+After all agents finish, Codex deduplicates findings and writes a single consolidated review to `reviews/review-<id>.md`.
 
 ## Requirements
 
 - [Claude Code](https://claude.ai/code) (CLI)
 - `jq` — `brew install jq` (macOS) / `apt install jq` (Linux)
 - [Codex CLI](https://github.com/openai/codex) (recommended) — `npm install -g @openai/codex`. Without Codex, the plugin falls back to asking Claude to self-review.
+
+### Codex multi-agent setup (important)
+
+This plugin relies on Codex [multi-agent](https://developers.openai.com/codex/multi-agent/) to run parallel review agents (diff, holistic, Next.js, UX). Without this, Codex runs everything in a single agent — it still works, but you lose the parallelism.
+
+Add this to your `~/.codex/config.toml`:
+
+```toml
+[features]
+multi_agent = true
+```
+
+If you don't have a config file yet, create one:
+
+```bash
+mkdir -p ~/.codex
+cat >> ~/.codex/config.toml << 'EOF'
+
+[features]
+multi_agent = true
+EOF
+```
 
 ## Installation
 
