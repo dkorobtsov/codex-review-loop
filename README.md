@@ -37,11 +37,6 @@ The Codex review covers:
 /plugin install review-loop@hamel-review
 ```
 
-Or for local development / testing without installing:
-
-```bash
-claude --plugin-dir /path/to/claude-review-loop/plugins/review-loop
-```
 
 ## Usage
 
