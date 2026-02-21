@@ -6,8 +6,18 @@
 #   Phase 2 (addressing): Claude addresses review → hook allows exit
 #
 # On any error, default to allowing exit (never trap the user in a broken loop).
+#
+# Environment variables:
+#   REVIEW_LOOP_CODEX_FLAGS  Override codex flags (default: --dangerously-bypass-approvals-and-sandbox)
 
-trap 'printf "{\"decision\":\"approve\"}\n"; exit 0' ERR
+LOG_FILE=".claude/review-loop.log"
+
+log() {
+  mkdir -p "$(dirname "$LOG_FILE")"
+  echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] $*" >> "$LOG_FILE"
+}
+
+trap 'log "ERROR: hook exited via ERR trap (line $LINENO)"; printf "{\"decision\":\"approve\"}\n"; exit 0' ERR
 
 # Consume stdin (hook input JSON) — must read to avoid broken pipe
 HOOK_INPUT=$(cat)
@@ -36,10 +46,19 @@ if [ "$ACTIVE" != "true" ]; then
   exit 0
 fi
 
+# Validate review_id format to prevent path traversal
+if ! echo "$REVIEW_ID" | grep -qE '^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$'; then
+  log "ERROR: invalid review_id format: $REVIEW_ID"
+  rm -f "$STATE_FILE"
+  printf '{"decision":"approve"}\n'
+  exit 0
+fi
+
 # Safety: if stop_hook_active is true and we're still in "task" phase,
 # something went wrong with the phase transition. Allow exit to prevent loops.
 STOP_HOOK_ACTIVE=$(echo "$HOOK_INPUT" | jq -r '.stop_hook_active // false' 2>/dev/null || echo "false")
 if [ "$STOP_HOOK_ACTIVE" = "true" ] && [ "$PHASE" = "task" ]; then
+  log "WARN: stop_hook_active=true in task phase, aborting to prevent loop"
   rm -f "$STATE_FILE"
   printf '{"decision":"approve"}\n'
   exit 0
@@ -102,9 +121,20 @@ Organize by severity (critical first). End with a summary: total issues, breakdo
 
 IMPORTANT: Write the FULL review to ${REVIEW_FILE}. You must create that file."
 
-    # Run codex non-interactively. Allow failure (review becomes optional).
+    # Run codex non-interactively with telemetry logging.
+    # REVIEW_LOOP_CODEX_FLAGS overrides the default flags.
+    CODEX_FLAGS="${REVIEW_LOOP_CODEX_FLAGS:---dangerously-bypass-approvals-and-sandbox}"
+    CODEX_EXIT=0
+    START_TIME=$(date +%s)
+
     if command -v codex &> /dev/null; then
-      codex --dangerously-bypass-approvals-and-sandbox exec "$CODEX_PROMPT" >/dev/null 2>&1 || true
+      log "Starting Codex review (flags: $CODEX_FLAGS)"
+      # shellcheck disable=SC2086
+      codex $CODEX_FLAGS exec "$CODEX_PROMPT" >/dev/null 2>&1 || CODEX_EXIT=$?
+      ELAPSED=$(( $(date +%s) - START_TIME ))
+      log "Codex finished (exit=$CODEX_EXIT, elapsed=${ELAPSED}s)"
+    else
+      log "WARN: codex not found, skipping independent review"
     fi
 
     # Transition to addressing phase
@@ -147,12 +177,14 @@ When satisfied, you may stop."
 
   addressing)
     # ── Phase 2 complete: Claude addressed the review. Allow exit. ───────
+    log "Review loop complete (review_id=$REVIEW_ID)"
     rm -f "$STATE_FILE"
     printf '{"decision":"approve"}\n'
     ;;
 
   *)
     # Unknown phase — clean up and allow exit
+    log "WARN: unknown phase '$PHASE', cleaning up"
     rm -f "$STATE_FILE"
     printf '{"decision":"approve"}\n'
     ;;

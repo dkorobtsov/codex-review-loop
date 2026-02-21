@@ -24,8 +24,8 @@ The Codex review covers:
 ## Requirements
 
 - [Claude Code](https://claude.ai/code) (CLI)
-- [Codex CLI](https://github.com/openai/codex) — `npm install -g @openai/codex`
-- `jq` — `brew install jq`
+- `jq` — `brew install jq` (macOS) / `apt install jq` (Linux)
+- [Codex CLI](https://github.com/openai/codex) (recommended) — `npm install -g @openai/codex`. Without Codex, the plugin falls back to asking Claude to self-review.
 
 ## Installation
 
@@ -85,12 +85,24 @@ claude-review-loop/
 │   └── stop-hook.sh          # Core lifecycle engine
 ├── scripts/
 │   └── setup-review-loop.sh  # Argument parsing, state file creation
+├── AGENTS.md                  # Agent operating guidelines
+├── CLAUDE.md                  # Symlink to AGENTS.md
 └── README.md
 ```
 
 ## Configuration
 
 The stop hook timeout is set to 900 seconds (15 minutes) in `hooks/hooks.json`. Adjust if your Codex reviews take longer.
+
+### Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REVIEW_LOOP_CODEX_FLAGS` | `--dangerously-bypass-approvals-and-sandbox` | Flags passed to `codex`. Set to `--sandbox workspace-write` for safer sandboxed reviews. |
+
+### Telemetry
+
+Execution logs are written to `.claude/review-loop.log` with timestamps, codex exit codes, and elapsed times. This file is gitignored.
 
 ## Credits
 

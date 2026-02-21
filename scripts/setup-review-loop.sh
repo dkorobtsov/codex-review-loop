@@ -17,6 +17,9 @@ Starts a review loop:
   2. Codex performs an independent code review
   3. Claude addresses the feedback
 
+Environment variables:
+  REVIEW_LOOP_CODEX_FLAGS  Override codex flags (default: --dangerously-bypass-approvals-and-sandbox)
+
 Example:
   /review-loop Add user authentication with JWT tokens and proper test coverage
 HELP
@@ -44,7 +47,10 @@ if ! command -v codex &> /dev/null; then
 fi
 
 if ! command -v jq &> /dev/null; then
-  echo "Error: 'jq' is required but not found. Install: brew install jq"
+  echo "Error: 'jq' is required but not found."
+  echo "  macOS:  brew install jq"
+  echo "  Linux:  apt install jq  /  yum install jq"
+  echo "  Docs:   https://jqlang.github.io/jq/download/"
   exit 1
 fi
 
@@ -55,7 +61,13 @@ if [ -f ".claude/review-loop.local.md" ]; then
 fi
 
 # Generate unique ID: timestamp + random hex
-REVIEW_ID="$(date +%Y%m%d-%H%M%S)-$(openssl rand -hex 3)"
+# Prefer openssl, fallback to /dev/urandom
+if command -v openssl &> /dev/null; then
+  RAND_HEX=$(openssl rand -hex 3)
+else
+  RAND_HEX=$(head -c 3 /dev/urandom | od -An -tx1 | tr -d ' \n')
+fi
+REVIEW_ID="$(date +%Y%m%d-%H%M%S)-${RAND_HEX}"
 
 # Create state file
 mkdir -p .claude
