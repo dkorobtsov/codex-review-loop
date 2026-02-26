@@ -1,22 +1,28 @@
 {
-  "name": "hamel-review",
+  "name": "dkorobtsov-review",
   "owner": {
     "name": "Hamel Husain"
   },
   "metadata": {
-    "description": "Automated code review loop plugin for Claude Code"
+    "description": "Automated code review loop plugin with file-scoped reviews, project convention injection, and AI anti-pattern detection"
   },
   "plugins": [
     {
       "name": "review-loop",
       "source": "./plugins/review-loop",
-      "description": "Automated code review loop: Claude implements, Codex reviews independently, Claude addresses feedback",
+      "description": "Automated code review loop with file-scoped reviews. Claude implements, Codex reviews independently (only files this agent touched), Claude addresses feedback.",
       "author": {
         "name": "Hamel Husain"
       },
-      "repository": "https://github.com/hamelsmu/claude-review-loop",
+      "contributors": [
+        {
+          "name": "Dmitry Korobtsov"
+        }
+      ],
+      "repository": "https://github.com/dkorobtsov/claude-review-loop",
+      "upstream": "https://github.com/hamelsmu/claude-review-loop",
       "license": "MIT",
-      "keywords": ["code-review", "codex", "quality", "automation"]
+      "keywords": ["code-review", "codex", "quality", "automation", "file-scoping", "multi-agent"]
     }
   ]
 }

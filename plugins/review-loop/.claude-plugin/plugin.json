@@ -1,11 +1,17 @@
 {
   "name": "review-loop",
-  "version": "1.6.0",
-  "description": "Automated code review loop: Claude implements, Codex reviews independently, Claude addresses feedback",
+  "version": "2.0.0",
+  "description": "Automated code review loop with file-scoped reviews and project convention injection. Claude implements, Codex reviews independently, Claude addresses feedback.",
   "author": {
     "name": "Hamel Husain"
   },
-  "repository": "https://github.com/hamelsmu/claude-review-loop",
+  "contributors": [
+    {
+      "name": "Dmitry Korobtsov"
+    }
+  ],
+  "repository": "https://github.com/dkorobtsov/claude-review-loop",
+  "upstream": "https://github.com/hamelsmu/claude-review-loop",
   "license": "MIT",
-  "keywords": ["code-review", "codex", "quality", "automation"]
+  "keywords": ["code-review", "codex", "quality", "automation", "file-scoping", "multi-agent"]
 }

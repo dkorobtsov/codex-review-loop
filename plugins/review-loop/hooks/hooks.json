@@ -1,6 +1,18 @@
 {
-  "description": "Review loop stop hook: runs Codex review after task completion, then has Claude address feedback",
+  "description": "Review loop hooks: file tracking + Codex review after task completion",
   "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/track-modified.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

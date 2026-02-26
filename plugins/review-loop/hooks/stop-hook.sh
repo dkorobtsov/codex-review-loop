@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# Review Loop — Stop Hook
+# Review Loop — Stop Hook (customized fork)
 #
 # Two-phase lifecycle:
 #   Phase 1 (task):       Claude finishes work → hook runs Codex multi-agent review → blocks exit
 #   Phase 2 (addressing): Claude addresses review → hook allows exit
 #
 # On any error, default to allowing exit (never trap the user in a broken loop).
+#
+# Customizations over upstream (hamelsmu/claude-review-loop):
+#   - File-scoped reviews: only reviews files THIS agent modified (parallel agent safe)
+#   - Project conventions injected into diff review (anti-patterns from AGENTS.md)
+#   - PostToolUse tracking file cleanup on completion
 #
 # Environment variables:
 #   REVIEW_LOOP_CODEX_FLAGS  Override codex flags (default: --dangerously-bypass-approvals-and-sandbox)
@@ -64,21 +69,72 @@ if [ "$STOP_HOOK_ACTIVE" = "true" ] && [ "$PHASE" = "task" ]; then
   exit 0
 fi
 
+# ── File scoping: find files THIS agent modified ──────────────────────────
+SESSION_ID=$(echo "$HOOK_INPUT" | jq -r '.session_id // ""' 2>/dev/null || echo "")
+
+get_scoped_files() {
+  local files=""
+
+  # Method 1: PostToolUse tracking file (most accurate)
+  if [ -n "$SESSION_ID" ]; then
+    local track_file=".claude/modified-files-${SESSION_ID}.txt"
+    if [ -f "$track_file" ]; then
+      files=$(cat "$track_file")
+      log "File scoping: found $(wc -l < "$track_file" | tr -d ' ') files from tracking"
+    fi
+  fi
+
+  # Method 2: Fallback to transcript parsing if no tracking file
+  if [ -z "$files" ]; then
+    local transcript
+    transcript=$(echo "$HOOK_INPUT" | jq -r '.transcript_path // ""' 2>/dev/null || echo "")
+    if [ -n "$transcript" ] && [ -f "$transcript" ]; then
+      files=$(jq -r 'select(.tool_name == "Edit" or .tool_name == "Write") | .tool_input.file_path // empty' "$transcript" 2>/dev/null | sort -u)
+      log "File scoping: found $(echo "$files" | grep -c . || echo 0) files from transcript"
+    fi
+  fi
+
+  # Method 3: Ultimate fallback — all uncommitted changes
+  if [ -z "$files" ]; then
+    files=$(git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null)
+    files=$(echo "$files" | sort -u)
+    log "File scoping: fallback to git diff ($(echo "$files" | grep -c . || echo 0) files)"
+  fi
+
+  echo "$files"
+}
+
 # ── Project type detection ────────────────────────────────────────────────
 detect_nextjs() {
-  [ -f "next.config.js" ] || [ -f "next.config.mjs" ] || [ -f "next.config.ts" ] || \
-    ([ -f "package.json" ] && grep -q '"next"' package.json 2>/dev/null)
+  # Check monorepo: any app with next.config or "next" in package.json
+  find . -maxdepth 3 -name "next.config.*" -not -path "*/node_modules/*" 2>/dev/null | head -1 | grep -q . || \
+    find . -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" -exec grep -l '"next"' {} \; 2>/dev/null | head -1 | grep -q .
 }
 
 detect_browser_ui() {
-  # Has HTML/JSX/TSX files in app/ or pages/ or src/ directories, or has a public/ dir
   [ -d "app" ] || [ -d "pages" ] || [ -d "src/app" ] || [ -d "src/pages" ] || \
-    [ -d "public" ] || [ -f "index.html" ]
+    [ -d "public" ] || [ -f "index.html" ] || \
+    find . -maxdepth 3 -name "app" -type d -not -path "*/node_modules/*" 2>/dev/null | head -1 | grep -q .
+}
+
+# ── Load project conventions (AGENTS.md / CLAUDE.md) ─────────────────────
+load_project_conventions() {
+  local conventions=""
+
+  # Check for AGENTS.md at repo root
+  if [ -f "AGENTS.md" ]; then
+    conventions=$(head -100 AGENTS.md 2>/dev/null || true)
+  elif [ -f "CLAUDE.md" ]; then
+    conventions=$(head -100 CLAUDE.md 2>/dev/null || true)
+  fi
+
+  echo "$conventions"
 }
 
 # ── Build the multi-agent review prompt ───────────────────────────────────
 build_review_prompt() {
   local REVIEW_FILE="$1"
+  local SCOPED_FILES="$2"
 
   local IS_NEXTJS=false
   local HAS_UI=false
@@ -87,9 +143,34 @@ build_review_prompt() {
 
   log "Project detection: nextjs=$IS_NEXTJS, browser_ui=$HAS_UI"
 
+  # Build file scope instruction
+  local FILE_SCOPE_INSTRUCTION=""
+  if [ -n "$SCOPED_FILES" ]; then
+    FILE_SCOPE_INSTRUCTION="IMPORTANT — FILE SCOPE: Only review changes in these specific files (this agent's modifications):
+$(echo "$SCOPED_FILES" | sed 's/^/  - /')
+
+Use \`git diff -- <file>\` for each file above. Do NOT review unrelated changes in the repository."
+  fi
+
+  # Load project conventions
+  local CONVENTIONS
+  CONVENTIONS=$(load_project_conventions)
+  local CONVENTIONS_BLOCK=""
+  if [ -n "$CONVENTIONS" ]; then
+    CONVENTIONS_BLOCK="
+PROJECT CONVENTIONS (from AGENTS.md — review against these standards):
+---
+${CONVENTIONS}
+---"
+  fi
+
   # ── Preamble ──
   cat << PREAMBLE_EOF
 You are orchestrating a thorough, independent code review of recent changes in this repository.
+
+${FILE_SCOPE_INSTRUCTION}
+
+${CONVENTIONS_BLOCK}
 
 Use multi-agent to run the following review agents IN PARALLEL. Each agent should return its findings as structured text (not write to files). After ALL agents complete, consolidate their findings into a single deduplicated review file.
 
@@ -97,12 +178,19 @@ IMPORTANT: Spawn one agent per review path below. Wait for all agents to finish.
 
 PREAMBLE_EOF
 
-  # ── Agent 1: Diff Review ──
-  cat << 'DIFF_EOF'
----
-AGENT 1: Diff Review (focus on uncommitted and recently committed changes ONLY)
+  # ── Agent 1: Diff Review (with project-specific anti-patterns) ──
+  if [ -n "$SCOPED_FILES" ]; then
+    local DIFF_CMD="Run \`git diff -- <file>\` for each scoped file listed above."
+  else
+    local DIFF_CMD="Run \`git diff\` and \`git diff --cached\` to see all uncommitted changes. Also run \`git log --oneline -5\` and \`git diff HEAD~5\` for recently committed work."
+  fi
 
-Run `git diff` and `git diff --cached` to see all uncommitted changes. Also run `git log --oneline -5` and `git diff HEAD~5` for recently committed work. Focus your review EXCLUSIVELY on this changed code.
+  cat << DIFF_EOF
+---
+AGENT 1: Diff Review (focus on changed code ONLY)
+
+${DIFF_CMD}
+Focus your review EXCLUSIVELY on this changed code.
 
 Review criteria for changed code:
 
@@ -127,6 +215,17 @@ Security:
 - Secrets: are any credentials, API keys, or tokens hardcoded or logged?
 - OWASP Top 10: check for broken access control, cryptographic failures, insecure design, security misconfiguration, vulnerable dependencies, SSRF
 - Are error messages safe (no stack traces or internal details leaked to users)?
+
+AI Agent Anti-Patterns (CRITICAL — these are common AI coding mistakes):
+- Did the agent create mocks/stubs just to pass tests instead of testing real behavior?
+- Was real code replaced with comments like "// implementation here" or "// TODO"?
+- Are there unused parameters prefixed with underscore (_param) to suppress lint warnings?
+- Did the agent just add code on top without integrating into existing patterns?
+- Are there hardcoded values that should use existing constants/enums?
+- Was error handling added for impossible scenarios (over-engineering)?
+- Are there new utility functions that duplicate existing ones in the codebase?
+- Did the agent add unnecessary type assertions (as any, !) instead of fixing types?
+- Were feature flags or backward-compat shims added when direct replacement was appropriate?
 
 For each issue: return file path, line number, severity (critical/high/medium/low), category, description, and suggested fix.
 
@@ -265,13 +364,26 @@ IMPORTANT: You MUST create the file ${REVIEW_FILE} with the full review.
 CONSOLIDATION_EOF
 }
 
+# ── Cleanup session tracking files ────────────────────────────────────────
+cleanup_tracking() {
+  if [ -n "$SESSION_ID" ]; then
+    rm -f ".claude/modified-files-${SESSION_ID}.txt"
+  fi
+  # Clean up stale tracking files older than 24h
+  find .claude -name "modified-files-*.txt" -mmin +1440 -delete 2>/dev/null || true
+}
+
 case "$PHASE" in
   task)
     # ── Phase 1 → 2: Run Codex multi-agent review ──────────────────────
     REVIEW_FILE="reviews/review-${REVIEW_ID}.md"
     mkdir -p reviews
 
-    CODEX_PROMPT=$(build_review_prompt "$REVIEW_FILE")
+    # Get scoped files for this agent
+    SCOPED_FILES=$(get_scoped_files)
+    log "Scoped files for review: $(echo "$SCOPED_FILES" | tr '\n' ', ')"
+
+    CODEX_PROMPT=$(build_review_prompt "$REVIEW_FILE" "$SCOPED_FILES")
 
     # Run codex non-interactively with telemetry logging.
     CODEX_FLAGS="${REVIEW_LOOP_CODEX_FLAGS:---dangerously-bypass-approvals-and-sandbox}"
@@ -322,6 +434,7 @@ Then run /review-loop again."
     if [ ! -f "$REVIEW_FILE" ]; then
       log "ERROR: Codex finished but review file not found: $REVIEW_FILE"
       rm -f "$STATE_FILE"
+      cleanup_tracking
       REASON="ERROR: Codex ran but did not produce a review file (${REVIEW_FILE}). This may mean the review timed out or Codex encountered an error. Check .claude/review-loop.log for details.
 
 Run /review-loop again to retry."
@@ -351,6 +464,7 @@ Use your own judgment. Do not blindly accept every suggestion."
     # ── Phase 2 complete: Claude addressed the review. Allow exit. ───────
     log "Review loop complete (review_id=$REVIEW_ID)"
     rm -f "$STATE_FILE"
+    cleanup_tracking
     printf '{"decision":"approve"}\n'
     ;;
 
@@ -358,6 +472,7 @@ Use your own judgment. Do not blindly accept every suggestion."
     # Unknown phase — clean up and allow exit
     log "WARN: unknown phase '$PHASE', cleaning up"
     rm -f "$STATE_FILE"
+    cleanup_tracking
     printf '{"decision":"approve"}\n'
     ;;
 esac

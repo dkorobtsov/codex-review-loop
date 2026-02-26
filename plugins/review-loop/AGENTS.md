@@ -7,6 +7,21 @@ A Claude Code plugin that creates a two-phase review loop:
 2. Codex independently reviews the changes
 3. Claude addresses the review feedback
 
+Fork of [hamelsmu/claude-review-loop](https://github.com/hamelsmu/claude-review-loop) with:
+- **File-scoped reviews** — PostToolUse hook tracks per-session modified files; Codex only reviews
+  files THIS agent touched (safe for parallel agents on same branch)
+- **Project convention injection** — reads AGENTS.md/CLAUDE.md and feeds conventions to Codex
+- **AI anti-pattern checks** — detects mocks-to-pass-tests, code-replaced-with-comments,
+  unused `_param` prefixes, hardcoded values, unnecessary type assertions
+
+## How file scoping works
+
+1. `PostToolUse` hook (`track-modified.sh`) fires on every Edit/Write
+2. Appends `tool_input.file_path` to `.claude/modified-files-{session_id}.txt`
+3. `Stop` hook reads that file → passes scoped file list to Codex
+4. Codex runs `git diff -- <file>` per file instead of reviewing entire repo
+5. Fallback chain: tracking file → transcript parsing → git diff (all changes)
+
 ## Conventions
 
 - Shell scripts must work on both macOS and Linux (handle `sed -i` differences)
@@ -29,3 +44,4 @@ A Claude Code plugin that creates a two-phase review loop:
 - Verify JSON output with `jq .` for each path
 - Test with codex unavailable (should fall back to self-review prompt)
 - Test with malformed state files (should fail-open)
+- Test file scoping: modify 2 files, verify only those appear in review scope
