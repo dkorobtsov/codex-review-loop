@@ -4,6 +4,9 @@
 # Appends file paths touched by Edit/Write tools to a session-scoped tracking file.
 # Used by stop-hook.sh to scope Codex review to only files THIS agent changed.
 #
+# On first fire for a session, claims a pending review-loop state file by writing
+# session_id into it. This links the session to the review for parallel agent safety.
+#
 # Receives JSON on stdin with tool_name and tool_input.file_path.
 
 INPUT=$(cat)
@@ -25,6 +28,25 @@ esac
 TRACK_DIR=".claude"
 mkdir -p "$TRACK_DIR"
 TRACK_FILE="${TRACK_DIR}/modified-files-${SESSION_ID}.txt"
+
+# ── Claim pending state file on first fire ────────────────────────────
+# State files without session_id are "pending" — created by /review-loop command.
+# First PostToolUse hook for a session claims it by writing session_id into the file.
+if [ -n "$SESSION_ID" ] && ! [ -f "$TRACK_FILE" ]; then
+  for sf in .claude/review-loop-*.local.md; do
+    [ -f "$sf" ] || continue
+    # Unclaimed = has no session_id line
+    if ! grep -q "^session_id:" "$sf" 2>/dev/null; then
+      if [ "$(uname)" = "Darwin" ]; then
+        sed -i '' "/^started_at:/a\\
+session_id: ${SESSION_ID}" "$sf"
+      else
+        sed -i "/^started_at:/a session_id: ${SESSION_ID}" "$sf"
+      fi
+      break
+    fi
+  done
+fi
 
 # Append only if not already tracked (dedup)
 if ! grep -qxF "$FILE_PATH" "$TRACK_FILE" 2>/dev/null; then

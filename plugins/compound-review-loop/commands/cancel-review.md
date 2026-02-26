@@ -1,25 +1,26 @@
 ---
-description: "Cancel an active review loop"
+description: "Cancel active review loop(s)"
 allowed-tools:
-  - Bash(test -f .claude/review-loop.local.md *)
-  - Bash(rm -f .claude/review-loop.local.md)
+  - Bash(ls .claude/review-loop-*.local.md *)
+  - Bash(rm -f .claude/review-loop-*.local.md)
+  - Bash(cat .claude/review-loop-*.local.md *)
   - Read
 ---
 
-Check if a review loop is active:
+Check if any review loops are active:
 
 ```bash
-test -f .claude/review-loop.local.md && echo "ACTIVE" || echo "NONE"
+ls .claude/review-loop-*.local.md 2>/dev/null && echo "ACTIVE" || echo "NONE"
 ```
 
-If active, read `.claude/review-loop.local.md` to get the current phase and review ID.
+If active, read each state file to show phase and review ID.
 
-Then remove the state file:
+Then remove all state files:
 
 ```bash
-rm -f .claude/review-loop.local.md
+rm -f .claude/review-loop-*.local.md
 ```
 
-Report: "Review loop cancelled (was at phase: X, review ID: Y)"
+Report: "Review loop(s) cancelled" with the phase and review ID of each.
 
-If no review loop was active, report: "No active review loop found."
+If no review loops were active, report: "No active review loops found."

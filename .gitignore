@@ -1,5 +1,5 @@
 # Review loop state (ephemeral, per-session)
-.claude/review-loop.local.md
+.claude/review-loop-*.local.md
 .claude/review-loop.log
 .claude/modified-files-*.txt
 

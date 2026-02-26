@@ -34,10 +34,18 @@ trap 'log "ERROR: hook exited via ERR trap (line $LINENO)"; printf "{\"decision\
 # Consume stdin (hook input JSON) — must read to avoid broken pipe
 HOOK_INPUT=$(cat)
 
-STATE_FILE=".claude/review-loop.local.md"
+# ── Find state file for THIS session ──────────────────────────────────
+# State files are per-review: .claude/review-loop-{REVIEW_ID}.local.md
+# Linked to sessions via `session_id:` field (written by track-modified.sh)
+SESSION_ID=$(echo "$HOOK_INPUT" | jq -r '.session_id // ""' 2>/dev/null || echo "")
 
-# No active loop → allow exit
-if [ ! -f "$STATE_FILE" ]; then
+STATE_FILE=""
+if [ -n "$SESSION_ID" ]; then
+  STATE_FILE=$(grep -l "session_id: ${SESSION_ID}" .claude/review-loop-*.local.md 2>/dev/null | head -1)
+fi
+
+# No state file for this session → allow exit
+if [ -z "$STATE_FILE" ] || [ ! -f "$STATE_FILE" ]; then
   printf '{"decision":"approve"}\n'
   exit 0
 fi
@@ -77,8 +85,6 @@ if [ "$STOP_HOOK_ACTIVE" = "true" ] && [ "$PHASE" = "task" ]; then
 fi
 
 # ── File scoping: find files THIS agent modified ──────────────────────────
-SESSION_ID=$(echo "$HOOK_INPUT" | jq -r '.session_id // ""' 2>/dev/null || echo "")
-
 get_scoped_files() {
   local files=""
 
@@ -699,8 +705,9 @@ cleanup_tracking() {
   if [ -n "$SESSION_ID" ]; then
     rm -f ".claude/modified-files-${SESSION_ID}.txt"
   fi
-  # Clean up stale tracking files older than 24h
+  # Clean up stale tracking + state files older than 24h
   find .claude -name "modified-files-*.txt" -mmin +1440 -delete 2>/dev/null || true
+  find .claude -name "review-loop-*.local.md" -mmin +1440 -delete 2>/dev/null || true
 }
 
 case "$PHASE" in
