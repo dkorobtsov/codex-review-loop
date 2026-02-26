@@ -117,6 +117,81 @@ detect_browser_ui() {
     find . -maxdepth 3 -name "app" -type d -not -path "*/node_modules/*" 2>/dev/null | head -1 | grep -q .
 }
 
+# ── Codebase map: scoped dependency context ──────────────────────────────
+# Derives module boundaries from changed files, generates focused map.
+# Requires `codebase-map` CLI. Gracefully skips if unavailable.
+#
+# Environment variables:
+#   REVIEW_LOOP_SKIP_MAP  Set to "true" to skip map generation
+#   REVIEW_LOOP_MAP_FORMAT  Override format (default: graph)
+generate_scoped_map() {
+  local SCOPED_FILES="$1"
+
+  if [ "${REVIEW_LOOP_SKIP_MAP:-false}" = "true" ]; then
+    return
+  fi
+
+  if ! command -v codebase-map &>/dev/null; then
+    log "Codebase map: skipped (codebase-map not installed)"
+    return
+  fi
+
+  # Need an index file — scan if missing (only on first run)
+  if [ ! -f ".codebasemap" ]; then
+    log "Codebase map: generating index (first run)"
+    codebase-map scan --quiet 2>/dev/null || {
+      log "Codebase map: scan failed"
+      return
+    }
+  fi
+
+  [ -z "$SCOPED_FILES" ] && return
+
+  # Derive unique top-level module dirs from changed files
+  # e.g. apps/bff-worker/src/foo.ts → apps/bff-worker
+  #      services/story-processor/src/bar.py → services/story-processor
+  #      packages/database/src/core.ts → packages/database
+  #      src/utils/helpers.ts → src (flat repo fallback)
+  local MODULE_DIRS
+  MODULE_DIRS=$(echo "$SCOPED_FILES" | sed 's|^\./||' | awk -F'/' '
+    # Monorepo patterns: apps/X, services/X, packages/X, libs/X
+    /^(apps|services|packages|libs|modules)\/[^/]+/ { print $1"/"$2; next }
+    # Fallback: use first directory
+    NF >= 2 { print $1; next }
+  ' | sort -u)
+
+  [ -z "$MODULE_DIRS" ] && return
+
+  # Build include patterns from module dirs
+  local INCLUDE_ARGS=""
+  for dir in $MODULE_DIRS; do
+    INCLUDE_ARGS="${INCLUDE_ARGS} --include '${dir}/**'"
+  done
+
+  local MAP_FORMAT="${REVIEW_LOOP_MAP_FORMAT:-graph}"
+
+  # Generate scoped map
+  local MAP_OUTPUT
+  MAP_OUTPUT=$(eval "codebase-map format --format ${MAP_FORMAT} ${INCLUDE_ARGS}" 2>/dev/null)
+
+  if [ -n "$MAP_OUTPUT" ]; then
+    local MAP_BYTES
+    MAP_BYTES=$(echo "$MAP_OUTPUT" | wc -c | tr -d ' ')
+    log "Codebase map: generated ${MAP_BYTES} bytes for modules: $(echo "$MODULE_DIRS" | tr '\n' ', ')"
+
+    # Cap at 40KB (~10K tokens) to avoid blowing up prompt
+    if [ "$MAP_BYTES" -gt 40000 ]; then
+      MAP_OUTPUT=$(echo "$MAP_OUTPUT" | head -500)
+      MAP_OUTPUT="${MAP_OUTPUT}
+
+[... truncated to 500 lines — full map was ${MAP_BYTES} bytes]"
+      log "Codebase map: truncated from ${MAP_BYTES} bytes"
+    fi
+
+    echo "$MAP_OUTPUT"
+  fi
+}
+
 # ── Load project conventions (AGENTS.md / CLAUDE.md) ─────────────────────
 load_project_conventions() {
   local conventions=""
@@ -164,6 +239,18 @@ ${CONVENTIONS}
 ---"
   fi
 
+  # Generate scoped dependency map
+  local MAP_OUTPUT
+  MAP_OUTPUT=$(generate_scoped_map "$SCOPED_FILES")
+  local MAP_BLOCK=""
+  if [ -n "$MAP_OUTPUT" ]; then
+    MAP_BLOCK="
+DEPENDENCY MAP (auto-generated for impacted modules — use for understanding relationships):
+\`\`\`
+${MAP_OUTPUT}
+\`\`\`"
+  fi
+
   # ── Preamble ──
   cat << PREAMBLE_EOF
 You are orchestrating a thorough, independent code review of recent changes in this repository.
@@ -171,6 +258,8 @@ You are orchestrating a thorough, independent code review of recent changes in t
 ${FILE_SCOPE_INSTRUCTION}
 
 ${CONVENTIONS_BLOCK}
+
+${MAP_BLOCK}
 
 Use multi-agent to run the following review agents IN PARALLEL. Each agent should return its findings as structured text (not write to files). After ALL agents complete, consolidate their findings into a single deduplicated review file.
 
