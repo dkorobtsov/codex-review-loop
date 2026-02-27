@@ -1,5 +1,5 @@
 {
-  "description": "Review loop hooks: file tracking, anti-pattern checks, Codex review + quality checks",
+  "description": "Review loop hooks: file tracking, anti-pattern checks, self-review, Codex parallel review",
   "hooks": {
     "PostToolUse": [
       {
@@ -31,6 +31,12 @@
     "Stop": [
       {
         "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/self-review.sh",
+            "timeout": 30,
+            "statusMessage": "Self-review: checking changes..."
+          },
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stop-hook.sh",
