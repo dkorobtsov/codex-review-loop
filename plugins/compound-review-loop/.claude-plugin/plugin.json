@@ -1,17 +1,9 @@
 {
   "name": "compound-review-loop",
   "version": "2.0.0",
-  "description": "Automated code review loop with file-scoped reviews and project convention injection. Claude implements, Codex reviews independently, Claude addresses feedback.",
+  "description": "Automated code review loop with file-scoped reviews, knowledge compounding, and AI anti-pattern detection. Claude implements, Codex reviews independently, Claude compounds learnings.",
   "author": {
-    "name": "Hamel Husain"
+    "name": "Dmitry Korobtsov"
   },
-  "contributors": [
-    {
-      "name": "Dmitry Korobtsov"
-    }
-  ],
-  "repository": "https://github.com/dkorobtsov/claude-review-loop",
-  "upstream": "https://github.com/hamelsmu/claude-review-loop",
-  "license": "MIT",
-  "keywords": ["code-review", "codex", "quality", "automation", "file-scoping", "multi-agent"]
+  "license": "MIT"
 }
