@@ -28,12 +28,12 @@ fi
 echo "Files to review ($FILE_COUNT):"
 echo "$FILES" | sed 's/^/  - /'
 
-# 3. Load project conventions (first 100 lines of AGENTS.md or CLAUDE.md)
+# 3. Load project conventions (full AGENTS.md or CLAUDE.md — intent layer root node)
 CONVENTIONS=""
 if [ -f "AGENTS.md" ]; then
-  CONVENTIONS=$(head -100 AGENTS.md 2>/dev/null || true)
+  CONVENTIONS=$(cat AGENTS.md 2>/dev/null || true)
 elif [ -f "CLAUDE.md" ]; then
-  CONVENTIONS=$(head -100 CLAUDE.md 2>/dev/null || true)
+  CONVENTIONS=$(cat CLAUDE.md 2>/dev/null || true)
 fi
 
 CONVENTIONS_BLOCK=""

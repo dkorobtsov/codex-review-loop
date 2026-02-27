@@ -247,9 +247,9 @@ load_project_conventions() {
 
   # Check for AGENTS.md at repo root
   if [ -f "AGENTS.md" ]; then
-    conventions=$(head -100 AGENTS.md 2>/dev/null || true)
+    conventions=$(cat AGENTS.md 2>/dev/null || true)
   elif [ -f "CLAUDE.md" ]; then
-    conventions=$(head -100 CLAUDE.md 2>/dev/null || true)
+    conventions=$(cat CLAUDE.md 2>/dev/null || true)
   fi
 
   echo "$conventions"
@@ -302,7 +302,7 @@ ${MAP_OUTPUT}
 
   # ── Preamble ──
   cat << PREAMBLE_EOF
-You are performing a thorough, independent code review of recent changes in this repository.
+You are orchestrating a thorough, independent code review of recent changes in this repository.
 
 ${FILE_SCOPE_INSTRUCTION}
 
@@ -310,7 +310,7 @@ ${CONVENTIONS_BLOCK}
 
 ${MAP_BLOCK}
 
-Review the changes using the criteria below. For each issue found, output: file path, line number, severity (P0-P3), category, description, and suggested fix.
+Use multi-agent to run the following review agents IN PARALLEL. Each agent should return its findings as structured text. After ALL agents complete, consolidate their findings into a single deduplicated review.
 
 PREAMBLE_EOF
 
@@ -497,18 +497,22 @@ For each issue: return screenshot description, severity, category, description, 
 UX_EOF
   fi
 
-  # ── Output format instructions ──
-  cat << FORMAT_EOF
+  # ── Consolidation instructions ──
+  cat << CONSOLIDATION_EOF
 ---
-OUTPUT FORMAT:
+CONSOLIDATION INSTRUCTIONS (after all agents complete):
 
-Organize findings by severity (P0 critical first, then P1 high, P2 medium, P3 low).
-For each finding:
-- [P0-P3] Title — file:line
-  Description. Suggested fix.
-
-End with summary: total issues by severity, overall assessment.
-FORMAT_EOF
+1. Collect all findings from all agents
+2. Deduplicate: if multiple agents flagged the same issue, keep the most detailed version
+3. Organize all findings by severity (critical first, then high, medium, low)
+4. For each finding, include:
+   - File path and line number (or directory for structural issues)
+   - Severity: critical / high / medium / low
+   - Category: which review path found it (Diff, Holistic, Next.js, UX)
+   - Description: clear explanation
+   - Suggested fix: concrete, actionable recommendation
+5. End with a summary: total issues, breakdown by severity, agents that ran, overall assessment
+CONSOLIDATION_EOF
 }
 
 # ── Parallel quality checks (lint + typecheck) ───────────────────────────
