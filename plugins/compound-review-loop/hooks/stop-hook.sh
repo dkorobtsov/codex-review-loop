@@ -37,14 +37,45 @@ HOOK_INPUT=$(cat)
 # ── Find state file for THIS session ──────────────────────────────────
 # State files are per-review: .claude/review-loop-{REVIEW_ID}.local.md
 # Linked to sessions via `session_id:` field (written by track-modified.sh)
+#
+# Fallback chain (Stop event may not include session_id):
+#   1. Match by session_id if available
+#   2. If exactly one active state file exists, use it
+#   3. If multiple, use most recently modified
+# Debug: log what fields the Stop event provides
+log "Stop hook fired. Input keys: $(echo "$HOOK_INPUT" | jq -r 'keys | join(",")' 2>/dev/null || echo 'parse-failed')"
+
 SESSION_ID=$(echo "$HOOK_INPUT" | jq -r '.session_id // ""' 2>/dev/null || echo "")
 
 STATE_FILE=""
+
+# Try 1: find by session_id
 if [ -n "$SESSION_ID" ]; then
   STATE_FILE=$(grep -l "session_id: ${SESSION_ID}" .claude/review-loop-*.local.md 2>/dev/null | head -1)
 fi
 
-# No state file for this session → allow exit
+# Try 2: fallback — find active state files
+if [ -z "$STATE_FILE" ] || [ ! -f "$STATE_FILE" ]; then
+  ACTIVE_FILES=""
+  for sf in .claude/review-loop-*.local.md; do
+    [ -f "$sf" ] || continue
+    if grep -q "^active: true" "$sf" 2>/dev/null; then
+      ACTIVE_FILES="${ACTIVE_FILES}${sf}\n"
+    fi
+  done
+  ACTIVE_COUNT=$(printf '%b' "$ACTIVE_FILES" | grep -c . 2>/dev/null || echo 0)
+
+  if [ "$ACTIVE_COUNT" -eq 1 ]; then
+    STATE_FILE=$(printf '%b' "$ACTIVE_FILES" | head -1)
+    log "State file: fallback to single active file $STATE_FILE"
+  elif [ "$ACTIVE_COUNT" -gt 1 ]; then
+    # Multiple active — use most recently modified (best guess for current session)
+    STATE_FILE=$(printf '%b' "$ACTIVE_FILES" | grep . | xargs ls -t 2>/dev/null | head -1)
+    log "State file: fallback to most recent of $ACTIVE_COUNT active files: $STATE_FILE"
+  fi
+fi
+
+# No state file found → allow exit (no active review loop)
 if [ -z "$STATE_FILE" ] || [ ! -f "$STATE_FILE" ]; then
   printf '{"decision":"approve"}\n'
   exit 0
