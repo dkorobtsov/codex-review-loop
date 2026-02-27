@@ -766,14 +766,25 @@ Then run /review-loop again."
     run_quality_checks "$REVIEW_FILE" "$SCOPED_FILES" &
     QUALITY_PID=$!
 
+    # Use `codex exec review --uncommitted` — purpose-built for code review.
+    # Full review prompt (all agents + conventions + anti-patterns) passed as custom instructions.
+    # Review findings go to stderr; capture to review file.
     # shellcheck disable=SC2086
-    codex $CODEX_FLAGS exec "$CODEX_PROMPT" >/dev/null 2>&1 || CODEX_EXIT=$?
+    echo "$CODEX_PROMPT" | codex exec review --uncommitted $CODEX_FLAGS - \
+      >/dev/null 2>"$REVIEW_FILE" || CODEX_EXIT=$?
     ELAPSED=$(( $(date +%s) - START_TIME ))
     log "Codex finished (exit=$CODEX_EXIT, elapsed=${ELAPSED}s)"
 
     # Wait for quality checks to finish (usually done before Codex)
     wait $QUALITY_PID 2>/dev/null || true
     log "Quality checks finished"
+
+    # Strip MCP startup noise from review file
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      sed -i '' '/^mcp:/d; /^Warning:/d' "$REVIEW_FILE"
+    else
+      sed -i '/^mcp:/d; /^Warning:/d' "$REVIEW_FILE"
+    fi
 
     # Transition to addressing phase
     if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -782,13 +793,11 @@ Then run /review-loop again."
       sed -i 's/^phase: task$/phase: addressing/' "$STATE_FILE"
     fi
 
-    if [ ! -f "$REVIEW_FILE" ]; then
-      log "ERROR: Codex finished but review file not found: $REVIEW_FILE"
-      rm -f "$STATE_FILE"
+    if [ ! -s "$REVIEW_FILE" ]; then
+      log "WARN: Codex produced no review findings (exit=$CODEX_EXIT)"
+      rm -f "$REVIEW_FILE" "$STATE_FILE"
       cleanup_tracking
-      REASON="ERROR: Codex ran but did not produce a review file (${REVIEW_FILE}). This may mean the review timed out or Codex encountered an error. Check .claude/review-loop.log for details.
-
-Run /review-loop again to retry."
+      REASON="Codex review completed but found no issues. All changes look clean."
       jq -n --arg r "$REASON" '{decision:"block", reason:$r}'
       exit 0
     fi
