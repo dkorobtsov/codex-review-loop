@@ -145,14 +145,6 @@ Claude implements the task. When it finishes, the stop hook:
 
 Runs 4 parallel Codex reviews on uncommitted changes. No review loop session needed.
 
-### On-demand single review
-
-```
-/review-uncommitted
-```
-
-Lightweight single-agent Codex review on uncommitted changes.
-
 ### Cancel a review loop
 
 ```
@@ -197,7 +189,6 @@ plugins/codex-review/
 ├── commands/
 │   ├── review-loop.md               # /review-loop slash command
 │   ├── review-parallel.md           # /review-parallel (on-demand, N agents)
-│   ├── review-uncommitted.md        # /review-uncommitted (on-demand, 1 agent)
 │   └── cancel-review.md             # /cancel-review
 ├── hooks/
 │   ├── hooks.json                   # Hook registration

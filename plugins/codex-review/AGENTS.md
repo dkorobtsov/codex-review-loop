@@ -21,7 +21,6 @@ compounding. Each agent in a parallel swarm gets a focused review of only THEIR 
 | --------------------- | -------------------------------------------------------- |
 | `/review-loop`        | Activate 3-phase review loop for current session         |
 | `/review-parallel`    | On-demand N parallel Codex reviews (standalone, no loop) |
-| `/review-uncommitted` | On-demand single-agent Codex review (lightweight)        |
 | `/cancel-review`      | Cancel active review loop                                |
 
 ## Hard Requirements (NEVER violate)
@@ -159,7 +158,6 @@ to strip noise and extract after last `^codex$` marker.
 ## Testing
 
 - `/review-parallel`: on-demand parallel review (same quality as loop)
-- `/review-uncommitted`: on-demand single-agent review (lightweight)
 - `scripts/test-codex-review.sh`: minimal CLI test of codex exec review
 - After modifying hooks: test all paths (no-state, task→addressing, addressing→compound, compound→approve)
 - Verify JSON output with `jq .` for each path
