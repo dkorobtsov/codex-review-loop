@@ -181,7 +181,8 @@ for f in "${OUTDIR}"/*.raw; do
 
   {
     echo "---"
-    echo "## ${AGENT_NAME^} Review"
+    AGENT_TITLE="$(echo "$AGENT_NAME" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')"
+    echo "## ${AGENT_TITLE} Review"
     echo ""
     if [ -s "$f" ]; then
       cat "$f"
