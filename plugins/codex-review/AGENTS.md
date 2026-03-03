@@ -17,11 +17,11 @@ compounding. Each agent in a parallel swarm gets a focused review of only THEIR 
 
 ## Commands
 
-| Command               | Description                                              |
-| --------------------- | -------------------------------------------------------- |
-| `/review-loop`        | Activate 3-phase review loop for current session         |
-| `/review-parallel`    | On-demand N parallel Codex reviews (standalone, no loop) |
-| `/cancel-review`      | Cancel active review loop                                |
+| Command            | Description                                              |
+| ------------------ | -------------------------------------------------------- |
+| `/review-loop`     | Activate 3-phase review loop for current session         |
+| `/review-parallel` | On-demand N parallel Codex reviews (standalone, no loop) |
+| `/cancel-review`   | Cancel active review loop                                |
 
 ## Hard Requirements (NEVER violate)
 
@@ -100,7 +100,8 @@ to strip noise and extract after last `^codex$` marker.
 ### Stop hook `session_id` not in Stop event
 
 - `PostToolUse` events include `session_id` — `Stop` events may NOT
-- Stop hook fallback chain: match by session_id → single active state file → most recent
+- Stop hook fallback chain: match by session_id → cross-reference (skip already-reviewed, unclaimed,
+  sessions without tracking files) → most recent (last resort)
 - Without fallback, hook silently exits with approve
 
 ### ERR trap catches optional steps
@@ -108,16 +109,29 @@ to strip noise and extract after last `^codex$` marker.
 - Global `trap ... ERR` catches ANY non-zero exit, including `codebase-map`, `jq` on missing files
 - Guard all optional steps with `|| true`
 
-### Parallel agent safety
+### Parallel agent safety (N concurrent review-loops)
 
-- State files per session: `.claude/codex-review-{REVIEW_ID}.local.md`
+- State files per review: `.claude/codex-review-{REVIEW_ID}.local.md`
 - Tracking files per session: `.claude/modified-files-{SESSION_ID}.txt`
 - Stale file cleanup: `find -mmin +60` (time-based, not blanket `rm -f`)
+- **Atomic claiming**: `track-modified.sh` uses `mkdir`-based lock (`.claude/.claiming/`) to prevent
+  TOCTOU race when multiple agents fire their first Edit simultaneously
+- **Cross-reference fallback**: When stop hook lacks session_id with multiple active reviews,
+  it skips already-reviewed state files and unclaimed state files, matching by tracking file existence
+- **Scoping chain**: tracking file → state file's session_id → transcript → git diff (last resort with warning)
 
 ### grep -c double-zero
 
 - `grep -c ... || echo 0` prints `0\n0` when grep exits 1 (0 matches + fallback echo)
 - Fix: `n=$(...) || true; echo "${n:-0}"`
+
+### Shell scripting patterns (learned)
+
+- Always `grep -F` (fixed-string) when matching session_id, review_id, or any external identifier — regex metacharacters cause silent mismatches
+- Always `while IFS= read -r` for file path iteration — `for x in $(cmd)` breaks on spaces/globs
+- Use `[[:space:]]*` in sed patterns when parsing YAML fields — macOS/Linux `sed -i` append behavior differs
+- Don't gate retry logic on a side-effect (e.g., file existence) — failed first attempt still creates the side-effect, permanently suppressing retries
+- When multiple candidates pass filters, pick "most recent" among eligible — not first in glob order
 
 ## Environment Variables
 
@@ -135,9 +149,9 @@ to strip noise and extract after last `^codex$` marker.
 ## File Scoping
 
 1. `track-modified.sh` fires on Edit/Write → appends to `.claude/modified-files-{session_id}.txt`
-2. First fire claims unclaimed state file (writes `session_id:` into it)
+2. First fire claims unclaimed state file via atomic mkdir lock (writes `session_id:` into it)
 3. Stop hook reads tracking file → scoped file list
-4. Fallback chain: tracking file → transcript parsing → git diff (all changes)
+4. Fallback chain: tracking file → state file's session_id tracking file → transcript parsing → git diff (last resort, warns in multi-agent)
 5. Paths relativized via `git rev-parse --show-toplevel`
 
 ## Knowledge Compounding (Phase 3)

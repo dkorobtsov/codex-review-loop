@@ -54,7 +54,8 @@ HOOK_INPUT=$(cat)
 # Fallback chain (Stop event may not include session_id):
 #   1. Match by session_id if available
 #   2. If exactly one active state file exists, use it
-#   3. If multiple, use most recently modified
+#   3. If multiple, cross-reference: skip already-reviewed, unclaimed, and
+#      sessions without tracking files; pick most recent among eligible
 # Debug: log what fields the Stop event provides
 log "Stop hook fired. Input keys: $(echo "$HOOK_INPUT" | jq -r 'keys | join(",")' 2>/dev/null || echo 'parse-failed')"
 
@@ -62,9 +63,9 @@ SESSION_ID=$(echo "$HOOK_INPUT" | jq -r '.session_id // ""' 2>/dev/null || echo 
 
 STATE_FILE=""
 
-# Try 1: find by session_id
+# Try 1: find by session_id (fixed-string match — session_id may contain regex metacharacters)
 if [ -n "$SESSION_ID" ]; then
-  STATE_FILE=$(grep -l "session_id: ${SESSION_ID}" "${REPO_ROOT}"/.claude/codex-review-*.local.md 2>/dev/null | head -1)
+  STATE_FILE=$(grep -Fl "session_id: ${SESSION_ID}" "${REPO_ROOT}"/.claude/codex-review-*.local.md 2>/dev/null | head -1)
 fi
 
 # Try 2: fallback — find active state files
@@ -76,15 +77,57 @@ if [ -z "$STATE_FILE" ] || [ ! -f "$STATE_FILE" ]; then
       ACTIVE_FILES="${ACTIVE_FILES}${sf}\n"
     fi
   done
-  ACTIVE_COUNT=$(printf '%b' "$ACTIVE_FILES" | grep -c . 2>/dev/null || echo 0)
+  ACTIVE_COUNT=$(printf '%b' "$ACTIVE_FILES" | grep -c . 2>/dev/null) || true
+  ACTIVE_COUNT="${ACTIVE_COUNT:-0}"
 
   if [ "$ACTIVE_COUNT" -eq 1 ]; then
     STATE_FILE=$(printf '%b' "$ACTIVE_FILES" | head -1)
     log "State file: fallback to single active file $STATE_FILE"
   elif [ "$ACTIVE_COUNT" -gt 1 ]; then
-    # Multiple active — use most recently modified (best guess for current session)
-    STATE_FILE=$(printf '%b' "$ACTIVE_FILES" | grep . | xargs ls -t 2>/dev/null | head -1)
-    log "State file: fallback to most recent of $ACTIVE_COUNT active files: $STATE_FILE"
+    # MULTI-AGENT SAFETY: Multiple active reviews — "most recent" is unreliable.
+    # Cross-reference with tracking files and existing review output to find
+    # eligible state files, then pick the most recently modified among them.
+    log "State file: multi-agent scenario ($ACTIVE_COUNT active files), using cross-reference"
+    ELIGIBLE_FILES=""
+    while IFS= read -r sf; do
+      [ -f "$sf" ] || continue
+      # Whitespace-tolerant parsing (sed append may vary across platforms)
+      SF_SID=$(sed -n 's/^[[:space:]]*session_id:[[:space:]]*//p' "$sf" | head -1)
+      SF_PHASE=$(sed -n 's/^[[:space:]]*phase:[[:space:]]*//p' "$sf" | head -1)
+
+      # Skip state files whose session has no tracking file (not our session)
+      if [ -n "$SF_SID" ] && [ ! -f "${REPO_ROOT}/.claude/modified-files-${SF_SID}.txt" ]; then
+        log "State file: skipping $sf — no tracking file for session $SF_SID"
+        continue
+      fi
+
+      # Skip unclaimed state files (no session_id = agent hasn't started editing yet)
+      if [ -z "$SF_SID" ]; then
+        log "State file: skipping $sf — unclaimed (no session_id)"
+        continue
+      fi
+
+      ELIGIBLE_FILES="${ELIGIBLE_FILES}${sf}\n"
+      log "State file: eligible $sf (session=$SF_SID, phase=$SF_PHASE)"
+    done < <(printf '%b' "$ACTIVE_FILES" | grep .)
+
+    # Pick most recently modified among eligible (deterministic, not first-match)
+    # Use `n=$(...) || true` pattern to avoid grep -c "0\n0" bug (see AGENTS.md gotchas)
+    ELIGIBLE_COUNT=$(printf '%b' "$ELIGIBLE_FILES" | grep -c . 2>/dev/null) || true
+    ELIGIBLE_COUNT="${ELIGIBLE_COUNT:-0}"
+    if [ "$ELIGIBLE_COUNT" -eq 1 ]; then
+      STATE_FILE=$(printf '%b' "$ELIGIBLE_FILES" | head -1)
+      log "State file: cross-reference matched $STATE_FILE"
+    elif [ "$ELIGIBLE_COUNT" -gt 1 ]; then
+      STATE_FILE=$(printf '%b' "$ELIGIBLE_FILES" | grep . | xargs ls -t 2>/dev/null | head -1)
+      log "State file: cross-reference picked most recent of $ELIGIBLE_COUNT eligible: $STATE_FILE"
+    fi
+
+    # Ultimate fallback: most recently modified of ALL active (single-agent backward compat)
+    if [ -z "$STATE_FILE" ] || [ ! -f "$STATE_FILE" ]; then
+      STATE_FILE=$(printf '%b' "$ACTIVE_FILES" | grep . | xargs ls -t 2>/dev/null | head -1)
+      log "State file: WARN cross-reference found 0 eligible, fell back to most recent: $STATE_FILE"
+    fi
   fi
 fi
 
@@ -141,7 +184,21 @@ get_scoped_files() {
     fi
   fi
 
-  # Method 2: Fallback to transcript parsing if no tracking file
+  # Method 2: Try tracking file from state file's session_id (covers session_id mismatch)
+  if [ -z "$files" ] && [ -f "$STATE_FILE" ]; then
+    local state_sid
+    state_sid=$(sed -n 's/^[[:space:]]*session_id:[[:space:]]*//p' "$STATE_FILE" | head -1)
+    # Validate state_sid has no path separators (prevent path traversal via crafted state file)
+    if [ -n "$state_sid" ] && [ "$state_sid" != "$SESSION_ID" ] && ! echo "$state_sid" | grep -q '[/\\]'; then
+      local alt_track="${REPO_ROOT}/.claude/modified-files-${state_sid}.txt"
+      if [ -f "$alt_track" ]; then
+        files=$(cat "$alt_track")
+        log "File scoping: found $(wc -l < "$alt_track" | tr -d ' ') files from state file's session ($state_sid)"
+      fi
+    fi
+  fi
+
+  # Method 3: Fallback to transcript parsing if no tracking file
   if [ -z "$files" ]; then
     local transcript
     transcript=$(echo "$HOOK_INPUT" | jq -r '.transcript_path // ""' 2>/dev/null || echo "")
@@ -151,8 +208,14 @@ get_scoped_files() {
     fi
   fi
 
-  # Method 3: Ultimate fallback — all uncommitted changes
+  # Method 4: Ultimate fallback — all uncommitted changes
+  # MULTI-AGENT WARNING: This gives ALL changes, breaking per-agent isolation.
   if [ -z "$files" ]; then
+    local active_reviews
+    active_reviews=$(ls "${REPO_ROOT}"/.claude/codex-review-*.local.md 2>/dev/null | wc -l | tr -d ' ') || active_reviews=0
+    if [ "$active_reviews" -gt 1 ]; then
+      log "WARN: git diff fallback with $active_reviews active reviews — review scoping will include ALL agents' changes"
+    fi
     files=$(git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null)
     files=$(echo "$files" | sort -u)
     log "File scoping: fallback to git diff ($(echo "$files" | grep -c . || echo 0) files)"

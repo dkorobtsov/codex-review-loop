@@ -1,7 +1,8 @@
 # Review loop state (ephemeral, per-session)
-.claude/review-loop-*.local.md
-.claude/review-loop.log
+.claude/codex-review-*.local.md
+.claude/codex-review.log
 .claude/modified-files-*.txt
+.claude/.claiming/
 
 # Learnings output (default dir, project-specific)
 .claude/learnings/
