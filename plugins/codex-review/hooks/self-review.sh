@@ -57,22 +57,14 @@ if [ -n "$SESSION_ID" ]; then
 fi
 
 # Method 2: Transcript parsing (fallback)
+# Only trigger on Edit/Write/MultiEdit/NotebookEdit in THIS session's transcript — not git diff.
+# Git diff catches other sessions' changes and fires self-review on pure conversations.
 if [ "$HAS_CHANGES" = "false" ]; then
   TRANSCRIPT=$(echo "$HOOK_INPUT" | jq -r '.transcript_path // ""' 2>/dev/null || echo "")
   if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
-    # Check if any Edit/Write tools were used
-    if jq -e 'select(.tool_name == "Edit" or .tool_name == "Write")' "$TRANSCRIPT" >/dev/null 2>&1; then
+    if jq -e 'select(.tool_name == "Edit" or .tool_name == "Write" or .tool_name == "MultiEdit" or .tool_name == "NotebookEdit")' "$TRANSCRIPT" >/dev/null 2>&1; then
       HAS_CHANGES=true
     fi
-  fi
-fi
-
-# Method 3: Git uncommitted changes (ultimate fallback)
-if [ "$HAS_CHANGES" = "false" ]; then
-  DIFF_COUNT=$(git diff --name-only 2>/dev/null | grep -c . 2>/dev/null || echo 0)
-  STAGED_COUNT=$(git diff --cached --name-only 2>/dev/null | grep -c . 2>/dev/null || echo 0)
-  if [ "$DIFF_COUNT" -gt 0 ] || [ "$STAGED_COUNT" -gt 0 ]; then
-    HAS_CHANGES=true
   fi
 fi
 
