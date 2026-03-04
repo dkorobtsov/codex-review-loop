@@ -35,6 +35,16 @@ fi
 echo "Files to review ($FILE_COUNT):"
 echo "$FILES" | sed 's/^/  - /'
 
+# 2b. Detect file types for smart agent selection
+HAS_CODE=false
+HAS_TESTS=false
+if echo "$FILES" | grep -qE '\.(ts|tsx|js|jsx|py|go|rs|java|rb|sh|sql|swift|kt)$'; then
+  HAS_CODE=true
+fi
+if echo "$FILES" | grep -qE '\.(ts|tsx|js|jsx|py|go|rs|java|rb)$'; then
+  HAS_TESTS=true
+fi
+
 # 3. Load project conventions
 CONVENTIONS=""
 if [ -f "AGENTS.md" ]; then
@@ -119,44 +129,65 @@ Integration: DB writes tested with real DB? API routes full cycle? Multi-step wo
 For each issue: [P0/P1/P2/P3] description — file:line
 P0=untested critical path, P1=significant gap, P2=should add, P3=nice to have"
 
-# 6. Launch parallel agents
+# 6. Launch parallel agents (smart selection based on file types)
 OUTDIR="/tmp/codex-parallel-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$OUTDIR"
 CODEX_FLAGS="${REVIEW_LOOP_CODEX_FLAGS:---dangerously-bypass-approvals-and-sandbox}"
 START_TIME=$(date +%s)
+PIDS=()
+AGENT_IDX=0
 
 echo ""
 echo "Output → $OUTDIR/"
-echo "Launching 4 parallel codex agents..."
+
+# Diff + Holistic always run
+AGENT_IDX=$((AGENT_IDX + 1))
+# shellcheck disable=SC2086
+codex exec review "$DIFF_PROMPT" $CODEX_FLAGS >/dev/null 2>"${OUTDIR}/${AGENT_IDX}-diff.raw" &
+PIDS+=($!)
+
+AGENT_IDX=$((AGENT_IDX + 1))
+# shellcheck disable=SC2086
+codex exec review "$HOLISTIC_PROMPT" $CODEX_FLAGS >/dev/null 2>"${OUTDIR}/${AGENT_IDX}-holistic.raw" &
+PIDS+=($!)
+
+# Security: skip if only docs/config/markdown changed
+if [ "$HAS_CODE" = "true" ]; then
+  AGENT_IDX=$((AGENT_IDX + 1))
+  # shellcheck disable=SC2086
+  codex exec review "$SECURITY_PROMPT" $CODEX_FLAGS >/dev/null 2>"${OUTDIR}/${AGENT_IDX}-security.raw" &
+  PIDS+=($!)
+else
+  echo "  Skipping security review (no code files in scope)"
+fi
+
+# Tests: skip if no testable code
+if [ "$HAS_TESTS" = "true" ]; then
+  AGENT_IDX=$((AGENT_IDX + 1))
+  # shellcheck disable=SC2086
+  codex exec review "$TESTS_PROMPT" $CODEX_FLAGS >/dev/null 2>"${OUTDIR}/${AGENT_IDX}-tests.raw" &
+  PIDS+=($!)
+else
+  echo "  Skipping tests review (no testable code in scope)"
+fi
+
+AGENT_COUNT=${#PIDS[@]}
+echo "Launching ${AGENT_COUNT} parallel codex agents..."
 echo "---"
 
-# shellcheck disable=SC2086
-codex exec review "$DIFF_PROMPT" $CODEX_FLAGS >/dev/null 2>"${OUTDIR}/1-diff.raw" &
-PID1=$!
-# shellcheck disable=SC2086
-codex exec review "$HOLISTIC_PROMPT" $CODEX_FLAGS >/dev/null 2>"${OUTDIR}/2-holistic.raw" &
-PID2=$!
-# shellcheck disable=SC2086
-codex exec review "$SECURITY_PROMPT" $CODEX_FLAGS >/dev/null 2>"${OUTDIR}/3-security.raw" &
-PID3=$!
-# shellcheck disable=SC2086
-codex exec review "$TESTS_PROMPT" $CODEX_FLAGS >/dev/null 2>"${OUTDIR}/4-tests.raw" &
-PID4=$!
-
 FAILURES=0
-wait $PID1 || FAILURES=$((FAILURES + 1))
-wait $PID2 || FAILURES=$((FAILURES + 1))
-wait $PID3 || FAILURES=$((FAILURES + 1))
-wait $PID4 || FAILURES=$((FAILURES + 1))
+for pid in "${PIDS[@]}"; do
+  wait "$pid" || FAILURES=$((FAILURES + 1))
+done
 
 ELAPSED=$(( $(date +%s) - START_TIME ))
 
 # 7. Clean each agent's output and merge
 REVIEW_FILE="${OUTDIR}/review-combined.md"
 {
-  echo "# Parallel Code Review — 4 Agents"
+  echo "# Parallel Code Review — ${AGENT_COUNT} Agents"
   echo ""
-  echo "Files: ${FILE_COUNT} | Agents: 4 | Duration: ${ELAPSED}s"
+  echo "Files: ${FILE_COUNT} | Agents: ${AGENT_COUNT} | Duration: ${ELAPSED}s"
   echo ""
 } > "$REVIEW_FILE"
 
@@ -195,7 +226,7 @@ for f in "${OUTDIR}"/*.raw; do
 done
 
 echo "---"
-echo "4 agents finished (elapsed=${ELAPSED}s, failures=${FAILURES})"
+echo "${AGENT_COUNT} agents finished (elapsed=${ELAPSED}s, failures=${FAILURES})"
 echo "Combined review: $REVIEW_FILE ($(wc -c < "$REVIEW_FILE" | tr -d ' ') bytes)"
 echo "Individual: ${OUTDIR}/*.raw"
 ```

@@ -21,6 +21,7 @@ compounding. Each agent in a parallel swarm gets a focused review of only THEIR 
 | ------------------ | -------------------------------------------------------- |
 | `/review-loop`     | Activate 3-phase review loop for current session         |
 | `/review-parallel` | On-demand N parallel Codex reviews (standalone, no loop) |
+| `/review-plan`     | Pre-implementation risk assessment (N agents, read-only) |
 | `/cancel-review`   | Cancel active review loop                                |
 
 ## Hard Requirements (NEVER violate)

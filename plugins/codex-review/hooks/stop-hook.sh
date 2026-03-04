@@ -338,7 +338,26 @@ build_review_context() {
 
   _CTX_IS_NEXTJS=false
   detect_nextjs && _CTX_IS_NEXTJS=true
-  log "Project detection: nextjs=$_CTX_IS_NEXTJS"
+
+  # Detect if scoped files warrant specific agents
+  _CTX_HAS_CODE=false
+  _CTX_HAS_TESTS=false
+  if [ -n "$SCOPED_FILES" ]; then
+    # Check for code files (not just docs/config/markdown)
+    if echo "$SCOPED_FILES" | grep -qE '\.(ts|tsx|js|jsx|py|go|rs|java|rb|sh|sql|swift|kt)$'; then
+      _CTX_HAS_CODE=true
+    fi
+    # Check for test-adjacent files (source files that have or need tests)
+    if echo "$SCOPED_FILES" | grep -qE '\.(ts|tsx|js|jsx|py|go|rs|java|rb)$'; then
+      _CTX_HAS_TESTS=true
+    fi
+  else
+    # No scoping — assume all agents relevant
+    _CTX_HAS_CODE=true
+    _CTX_HAS_TESTS=true
+  fi
+
+  log "Project detection: nextjs=$_CTX_IS_NEXTJS has_code=$_CTX_HAS_CODE has_tests=$_CTX_HAS_TESTS"
 
   # File scope instruction
   _CTX_FILE_SCOPE=""
@@ -681,23 +700,31 @@ run_parallel_codex_reviews() {
   codex exec review "$HOLISTIC_PROMPT" $CODEX_FLAGS >/dev/null 2>"${TMPDIR}/holistic.raw" &
   PIDS+=($!)
 
-  # Agent 3: Security Review (always)
-  AGENT_NAMES+=("security")
-  AGENT_LABELS+=("Security Review")
-  local SECURITY_PROMPT
-  SECURITY_PROMPT=$(build_security_prompt)
-  # shellcheck disable=SC2086
-  codex exec review "$SECURITY_PROMPT" $CODEX_FLAGS >/dev/null 2>"${TMPDIR}/security.raw" &
-  PIDS+=($!)
+  # Agent 3: Security Review (skip for docs/config-only changes)
+  if [ "$_CTX_HAS_CODE" = "true" ]; then
+    AGENT_NAMES+=("security")
+    AGENT_LABELS+=("Security Review")
+    local SECURITY_PROMPT
+    SECURITY_PROMPT=$(build_security_prompt)
+    # shellcheck disable=SC2086
+    codex exec review "$SECURITY_PROMPT" $CODEX_FLAGS >/dev/null 2>"${TMPDIR}/security.raw" &
+    PIDS+=($!)
+  else
+    log "Skipping security review (no code files in scope)"
+  fi
 
-  # Agent 4: Test Coverage Review (always)
-  AGENT_NAMES+=("tests")
-  AGENT_LABELS+=("Test Coverage Review")
-  local TESTS_PROMPT
-  TESTS_PROMPT=$(build_tests_prompt)
-  # shellcheck disable=SC2086
-  codex exec review "$TESTS_PROMPT" $CODEX_FLAGS >/dev/null 2>"${TMPDIR}/tests.raw" &
-  PIDS+=($!)
+  # Agent 4: Test Coverage Review (skip for docs/config-only changes)
+  if [ "$_CTX_HAS_TESTS" = "true" ]; then
+    AGENT_NAMES+=("tests")
+    AGENT_LABELS+=("Test Coverage Review")
+    local TESTS_PROMPT
+    TESTS_PROMPT=$(build_tests_prompt)
+    # shellcheck disable=SC2086
+    codex exec review "$TESTS_PROMPT" $CODEX_FLAGS >/dev/null 2>"${TMPDIR}/tests.raw" &
+    PIDS+=($!)
+  else
+    log "Skipping tests review (no testable code in scope)"
+  fi
 
   # Agent 5: Next.js (conditional)
   if [ "$_CTX_IS_NEXTJS" = "true" ]; then

@@ -33,6 +33,15 @@ of only their own work.
 Run N parallel Codex reviews on uncommitted changes — no review loop needed. 4 specialized agents (diff, holistic, security,
 tests) review independently and produce a combined report.
 
+### Pre-implementation (`/review-plan`)
+
+Run N parallel Codex agents in **read-only** mode against the existing codebase, given a plan/spec as input. 4 agents
+assess risks, challenge complexity, and find corner cases **before any code is written**.
+
+```
+/review-plan docs/tasks/my-feature.md
+```
+
 ### Full loop (`/review-loop`)
 
 Three-phase lifecycle:
@@ -163,6 +172,23 @@ Claude implements the task. When it finishes, the stop hook:
 
 Runs 4 parallel Codex reviews on uncommitted changes. No review loop session needed.
 
+### Pre-implementation risk assessment
+
+```
+/review-plan path/to/plan.md
+```
+
+Takes a plan/spec/PRD markdown file and runs 4 parallel Codex agents in read-only sandbox mode:
+
+| Agent              | Focus                                                                          |
+| ------------------ | ------------------------------------------------------------------------------ |
+| **Dependencies**   | API contracts, schema conflicts, import graph, config gaps                     |
+| **Architecture**   | Pattern fit, simplification, existing code reuse, refactor-first alternatives  |
+| **Security**       | Attack surface, auth gaps, input validation, secrets, existing vulnerabilities |
+| **Testing**        | Coverage gaps, corner cases, failure modes, race conditions, rollback, scale   |
+
+Each agent explores the codebase (read-only) and maps risks against the plan. Output: `/tmp/codex-plan-*/risk-report.md`.
+
 ### Cancel a review loop
 
 ```
@@ -207,6 +233,7 @@ plugins/codex-review/
 ├── commands/
 │   ├── review-loop.md               # /review-loop slash command
 │   ├── review-parallel.md           # /review-parallel (on-demand, N agents)
+│   ├── review-plan.md               # /review-plan (pre-implementation risk assessment)
 │   └── cancel-review.md             # /cancel-review
 ├── hooks/
 │   ├── hooks.json                   # Hook registration
@@ -226,7 +253,8 @@ plugins/codex-review/
 
 | Variable                          | Default                                      | Description                             |
 | --------------------------------- | -------------------------------------------- | --------------------------------------- |
-| `REVIEW_LOOP_CODEX_FLAGS`         | `--dangerously-bypass-approvals-and-sandbox` | Flags passed to `codex exec`            |
+| `REVIEW_LOOP_CODEX_FLAGS`         | `--dangerously-bypass-approvals-and-sandbox` | Flags passed to `codex exec` (review)   |
+| `REVIEW_LOOP_PLAN_FLAGS`          | `--full-auto`                                | Flags passed to `codex exec` (plan)     |
 | `REVIEW_LOOP_OUTPUT_DIR`          | auto-resolved                                | Override output dir for learnings       |
 | `REVIEW_LOOP_SINGLE_AGENT`        | `false`                                      | Disable parallel (single codex process) |
 | `REVIEW_LOOP_SKIP_COMPOUND`       | `false`                                      | Skip knowledge extraction phase         |
