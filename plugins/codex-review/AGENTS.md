@@ -27,7 +27,7 @@ compounding. Each agent in a parallel swarm gets a focused review of only THEIR 
 
 ## Hard Requirements (NEVER violate)
 
-- **Parallel review**: N separate `codex exec review` processes, one per category (diff, holistic, security, tests,
+- **Parallel review**: N separate `codex exec review` processes, one per category (diff, holistic, security, simplify, tests,
   +conditional nextjs). NOT single-process multi-agent
 - **Full AGENTS.md injection**: Load ENTIRE root AGENTS.md/CLAUDE.md into review prompt — not truncated
 - **File-scoped reviews**: Each agent's review covers only files THAT agent modified
@@ -49,13 +49,14 @@ Phase 3 (compound):   Claude extracts reusable lore → updates AGENTS.md + prog
 
 Default: N parallel processes. Fallback: `REVIEW_LOOP_SINGLE_AGENT=true` for single process.
 
-5 review categories (4 always + 1 conditional):
+6 review categories (5 always + 1 conditional):
 
 1. **Diff Review** — line-by-line code changes, AI anti-patterns, DRY, naming
 2. **Holistic Review** — architecture, module structure, documentation, agent readiness
 3. **Security Review** — auth, injection, data protection, rate limiting
-4. **Test Coverage Review** — missing tests, test quality, anti-patterns, integration
-5. **Next.js Review** (conditional) — App Router, RSC, caching, bundle size, React performance
+4. **Simplify Review** — reuse misses, over-abstraction, dead defense, speculative generality
+5. **Test Coverage Review** — missing tests, test quality, anti-patterns, integration
+6. **Next.js Review** (conditional) — App Router, RSC, caching, bundle size, React performance
 
 Each agent gets: file scope instruction + project conventions + dependency map (where relevant) + category-specific review
 criteria. Outputs merged into single `reviews/review-{ID}.md` with per-agent sections.

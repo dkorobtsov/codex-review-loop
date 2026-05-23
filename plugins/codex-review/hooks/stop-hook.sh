@@ -548,6 +548,33 @@ P0=blocks ship (exploit possible), P1=must fix, P2=defense-in-depth, P3=hardenin
 SECURITY_EOF
 }
 
+build_simplify_prompt() {
+  cat << SIMPLIFY_EOF
+You are performing an independent code review focused on SIMPLIFICATION and REUSE of recent changes.
+
+${_CTX_FILE_SCOPE}
+
+${_CTX_CONVENTIONS}
+
+For each scoped file: run \`git diff -- <file>\` for tracked files, \`cat <file>\` for untracked files. Then explore the codebase (\`grep\`, \`find\`, \`cat\`) to find existing utilities, helpers, services, and patterns the diff could have leveraged.
+
+Challenge the diff's complexity. The bar: would a careful senior engineer have written less code?
+
+Reuse misses: Does the diff reinvent something the codebase already has? Point to the exact existing file:line and show what should have been called/imported instead.
+Over-abstraction: New class/interface/factory/wrapper where a function (or inline code) would do? Premature generalization for one caller? Three similar lines beats an abstraction.
+Dead defense: Try/catch around code that can't throw? Null checks on values the type system guarantees? Validation at internal boundaries? Fallbacks for scenarios that can't happen?
+Unneeded scaffolding: New config keys, feature flags, env vars, or migration steps that aren't load-bearing? Backwards-compatibility shims for code with no external callers?
+Wrong shape: A fundamentally simpler way to achieve the same outcome — different data model, different API shape, simpler control flow? Could a small refactor of existing code have made this trivial?
+Speculative generality: Options/params/branches added 'in case' rather than for a current caller? Hooks/extension points with one implementation?
+Comment & dead-code bloat: Comments restating what the code says? Re-exports, renamed _vars, '// removed' breadcrumbs?
+
+For each finding, be SPECIFIC: point to the existing code (file:line) that should have been reused, or name the abstraction/branch/flag that should be deleted, and show the shorter version.
+
+For each issue: [P0/P1/P2/P3] description — file:line (+ existing-code file:line when relevant)
+P0=clearly reinvents existing code or major over-engineering, P1=meaningful simplification possible, P2=should trim, P3=nit
+SIMPLIFY_EOF
+}
+
 build_tests_prompt() {
   cat << TESTS_EOF
 You are performing an independent code review focused on TEST QUALITY and COVERAGE.
@@ -716,7 +743,20 @@ run_parallel_codex_reviews() {
     log "Skipping security review (no code files in scope)"
   fi
 
-  # Agent 4: Test Coverage Review (skip for docs/config-only changes)
+  # Agent 4: Simplify Review (skip for docs/config-only changes)
+  if [ "$_CTX_HAS_CODE" = "true" ]; then
+    AGENT_NAMES+=("simplify")
+    AGENT_LABELS+=("Simplify Review")
+    local SIMPLIFY_PROMPT
+    SIMPLIFY_PROMPT=$(build_simplify_prompt)
+    # shellcheck disable=SC2086
+    codex exec review "$SIMPLIFY_PROMPT" $CODEX_FLAGS >/dev/null 2>"${TMPDIR}/simplify.raw" &
+    PIDS+=($!)
+  else
+    log "Skipping simplify review (no code files in scope)"
+  fi
+
+  # Agent 5: Test Coverage Review (skip for docs/config-only changes)
   if [ "$_CTX_HAS_TESTS" = "true" ]; then
     AGENT_NAMES+=("tests")
     AGENT_LABELS+=("Test Coverage Review")
@@ -729,7 +769,7 @@ run_parallel_codex_reviews() {
     log "Skipping tests review (no testable code in scope)"
   fi
 
-  # Agent 5: Next.js (conditional)
+  # Agent 6: Next.js (conditional)
   if [ "$_CTX_IS_NEXTJS" = "true" ]; then
     AGENT_NAMES+=("nextjs")
     AGENT_LABELS+=("Next.js Best Practices")
