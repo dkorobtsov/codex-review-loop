@@ -46,6 +46,19 @@ if [ -n "$SELF_SESSION_ID" ]; then
   fi
 fi
 
+# Defer to /review-loop even if state file isn't claimed yet.
+# Race: /review-loop creates the state file, but session_id is only written
+# on the first Edit (via track-modified.sh). If Stop fires before any Edit
+# (e.g. immediately after /review-loop activation), the file is unclaimed
+# and the check above misses it — self-review then blocks and codex may
+# get drowned out. Skip if any state file was created/touched recently.
+if find "${REPO_ROOT}/.claude" -maxdepth 1 \
+     -name 'codex-review-*.local.md' -mmin -10 \
+     2>/dev/null | grep -q .; then
+  printf '{"decision":"approve"}\n'
+  exit 0
+fi
+
 # ── Cleanup helper ────────────────────────────────────────────────────
 # Remove current session's tracking file on exit (prevents accumulation).
 # The stop-hook cleanup only runs during review-loop; self-review handles all other sessions.
